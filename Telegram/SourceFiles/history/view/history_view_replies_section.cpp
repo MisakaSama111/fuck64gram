@@ -809,7 +809,9 @@ void RepliesWidget::setupComposeControls() {
 		}
 	}, lifetime());
 
-	_composeControls->scrollKeyEvents(
+	rpl::merge(
+		_composeControls->scrollKeyEvents(),
+		_inner->scrollKeyEvents()
 	) | rpl::start_with_next([=](not_null<QKeyEvent*> e) {
 		_scroll->keyPressEvent(e);
 	}, lifetime());
@@ -908,7 +910,7 @@ void RepliesWidget::setupSwipeReply() {
 		}
 	}, [=, show = controller()->uiShow()](int cursorTop) {
 		auto result = HistoryView::SwipeHandlerFinishData();
-		if (_inner->elementInSelectionMode()) {
+		if (_inner->elementInSelectionMode().inSelectionMode) {
 			return result;
 		}
 		const auto view = _inner->lookupItemByY(cursorTop);
@@ -1234,6 +1236,7 @@ void RepliesWidget::sendVoice(ComposeControls::VoiceToSend &&data) {
 		data.bytes,
 		data.waveform,
 		data.duration,
+		data.video,
 		std::move(action));
 
 	_composeControls->cancelReplyMessage();
