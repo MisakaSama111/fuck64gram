@@ -604,8 +604,10 @@ not_null<UserData*> Session::processUser(const MTPUser &data) {
 				result->setUnavailableReasons(Data::UnavailableReason::Extract(
 					data.vrestriction_reason()));
 				QString reason;
-				for (const auto v : restriction->v) {
-					reason += QString("%1-%2: %3\n").arg(v.c_restrictionReason().vreason().v.constData()).arg(v.c_restrictionReason().vplatform().v.constData()).arg(v.c_restrictionReason().vtext().v.constData());
+				for (const auto &v : restriction->v) {
+					reason += QString("%1-%2: %3\n").arg(v.c_restrictionReason().vreason().v.constData(),
+														 v.c_restrictionReason().vplatform().v.constData(),
+														 v.c_restrictionReason().vtext().v.constData());
 				}
 				result->restriction_reason = reason;
 			}
@@ -920,8 +922,10 @@ not_null<PeerData*> Session::processChat(const MTPChat &data) {
 				channel->setUnavailableReasons(Data::UnavailableReason::Extract(
 					data.vrestriction_reason()));
 				QString reason;
-				for (const auto v : restriction->v) {
-					reason += QString("%1-%2: %3\n").arg(v.c_restrictionReason().vreason().v.constData()).arg(v.c_restrictionReason().vplatform().v.constData()).arg(v.c_restrictionReason().vtext().v.constData());
+				for (const auto &v : restriction->v) {
+					reason += QString("%1-%2: %3\n").arg(v.c_restrictionReason().vreason().v.constData(),
+														 v.c_restrictionReason().vplatform().v.constData(),
+														 v.c_restrictionReason().vtext().v.constData());
 				}
 				channel->restriction_reason = reason;
 			}
@@ -1426,10 +1430,6 @@ void Session::rememberPassportCredentials(
 
 void Session::forgetPassportCredentials() {
 	_passportCredentials = nullptr;
-}
-
-QString Session::nameSortKey(const QString &name) const {
-	return TextUtilities::RemoveAccents(name).toLower();
 }
 
 void Session::setupMigrationViewer() {
@@ -1979,6 +1979,19 @@ void Session::notifyPinnedDialogsOrderUpdated() {
 
 rpl::producer<> Session::pinnedDialogsOrderUpdated() const {
 	return _pinnedDialogsOrderUpdated.events();
+}
+
+Session::CreditsSubsRebuilderPtr Session::createCreditsSubsRebuilder() {
+	if (auto result = activeCreditsSubsRebuilder()) {
+		return result;
+	}
+	auto result = std::make_shared<CreditsSubsRebuilder>();
+	_creditsSubsRebuilder = result;
+	return result;
+}
+
+Session::CreditsSubsRebuilderPtr Session::activeCreditsSubsRebuilder() const {
+	return _creditsSubsRebuilder.lock();
 }
 
 void Session::registerHeavyViewPart(not_null<ViewElement*> view) {

@@ -162,7 +162,7 @@ void Sticker::initSize(int customSize) {
 	
 	auto peerId = _parent->data()->from() ? _parent->data()->from()->id : PeerId(0);
 	auto user = _parent->history()->session().data().peerLoaded(_parent->data()->from() ? _parent->data()->from()->id : PeerId(0));
-	if (GetEnhancedBool("blocked_user_spoiler_mode") && blockExist(int64(peerId.value)) || GetEnhancedBool("blocked_user_spoiler_mode") && user && user->isBlocked()) {
+	if ((GetEnhancedBool("blocked_user_spoiler_mode") && blockExist(peerId.value)) || (GetEnhancedBool("blocked_user_spoiler_mode") && user && user->isBlocked())) {
 		_size = DownscaledSize(_data->dimensions, {128,kMaxSizeFixed});
 	}
 }
@@ -257,7 +257,6 @@ DocumentData *Sticker::document() {
 
 void Sticker::stickerClearLoopPlayed() {
 	_oncePlayed = false;
-	_premiumEffectPlayed = false;
 	_premiumEffectSkipped = false;
 }
 

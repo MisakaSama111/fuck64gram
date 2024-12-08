@@ -544,12 +544,21 @@ QSize Document::countCurrentSize(int newWidth) {
 	if (!captioned && !hasTranscribe) {
 		auto result = File::countCurrentSize(newWidth);
 		if (isBubbleBottom()) {
-			if (const auto link = thumbedLinkMaxWidth()) {
+			const auto thumbedWidth = thumbedLinkMaxWidth();
+			const auto statusWidth = thumbedWidth
+				? 0
+				: st::normalFont->width(_statusText);
+			if (thumbedWidth || statusWidth) {
 				const auto needed = st.padding.left()
-					+ st.thumbSize
+					+ (thumbedWidth
+						? st.thumbSize + st.thumbSkip
+						: st::msgFileLayout.thumbSize
+							+ st::mediaUnreadSkip)
+					+ (thumbedWidth + statusWidth)
 					+ st.thumbSkip
-					+ link
-					+ st.thumbSkip
+					+ (_realParent->hasUnreadMediaFlag()
+						? st::mediaUnreadSkip + st::mediaUnreadSize
+						: 0)
 					+ _parent->bottomInfoFirstLineWidth()
 					+ st.padding.right();
 				if (result.width() < needed) {
@@ -605,7 +614,7 @@ void Document::draw(
 	if (!_dataMedia->canBePlayed(_realParent)) {
 		auto peerId = _parent->data()->from() ? _parent->data()->from()->id : PeerId(0);
 		auto user = history()->session().data().peerLoaded(_parent->data()->from() ? _parent->data()->from()->id : PeerId(0));
-		if (!blockExist(int64(peerId.value)) || !GetEnhancedBool("blocked_user_spoiler_mode") && user && !user->isBlocked()) {
+		if (!blockExist(peerId.value) || (!GetEnhancedBool("blocked_user_spoiler_mode") && user && !user->isBlocked())) {
 			_dataMedia->automaticLoad(_realParent->fullId(), _realParent);
 		}
 	}

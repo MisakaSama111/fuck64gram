@@ -11,12 +11,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_utilities.h"
 #include <core/shortcuts.h>
 #include "core/click_handler_types.h"
+#include "core/phone_click_handler.h"
 #include "history/history_item_helpers.h"
 #include "history/view/controls/history_view_forward_panel.h"
 #include "history/view/controls/history_view_draft_options.h"
 #include "boxes/moderate_messages_box.h"
 #include "history/view/media/history_view_sticker.h"
 #include "history/view/media/history_view_web_page.h"
+#include "history/view/reactions/history_view_reactions.h"
 #include "history/view/reactions/history_view_reactions_button.h"
 #include "history/view/reactions/history_view_reactions_selector.h"
 #include "history/view/history_view_about_view.h"
@@ -39,6 +41,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/reaction_fly_animation.h"
 #include "ui/text/text_entity.h"
 #include "ui/text/text_isolated_emoji.h"
+#include "ui/text/text_utilities.h"
 #include "ui/boxes/edit_factcheck_box.h"
 #include "ui/boxes/report_box_graphics.h"
 #include "ui/controls/delete_message_context_action.h"
@@ -129,15 +132,6 @@ int BinarySearchBlocksOrItems(const T &list, int edge) {
 	return start;
 }
 
-[[nodiscard]] bool CanSendReply(not_null<const HistoryItem*> item) {
-	const auto peer = item->history()->peer;
-	const auto topic = item->topic();
-	return topic
-		? Data::CanSendAnything(topic)
-		: (Data::CanSendAnything(peer)
-			&& (!peer->isChannel() || peer->asChannel()->amIn()));
-}
-
 } // namespace
 
 // flick scroll taken from http://qt-project.org/doc/qt-4.8/demos-embedded-anomaly-src-flickcharm-cpp.html
@@ -160,7 +154,11 @@ public:
 			not_null<const Element*> view) override {
 		return (Element::Moused() == view);
 	}
-	HistoryView::SelectionModeResult elementInSelectionMode() override {
+	HistoryView::SelectionModeResult elementInSelectionMode(
+			const Element *view) override {
+		if (view && view->data()->isSponsored()) {
+			return HistoryView::SelectionModeResult();
+		}
 		return _widget
 			? _widget->inSelectionMode()
 			: HistoryView::SelectionModeResult();
@@ -579,21 +577,13 @@ void HistoryInner::setupSwipeReply() {
 				const auto replyToItemId = (selected.item
 					? selected.item
 					: still)->fullId();
-				if (canSendReply) {
-					_widget->replyToMessage({
-						.messageId = replyToItemId,
-						.quote = selected.text,
-						.quoteOffset = selected.offset,
-					});
-					if (!selected.text.empty()) {
-						_widget->clearSelected();
-					}
-				} else {
-					HistoryView::Controls::ShowReplyToChatBox(show, {
-						.messageId = replyToItemId,
-						.quote = selected.text,
-						.quoteOffset = selected.offset,
-					});
+				_widget->replyToMessage({
+					.messageId = replyToItemId,
+					.quote = selected.text,
+					.quoteOffset = selected.offset,
+				});
+				if (!selected.text.empty()) {
+					_widget->clearSelected();
 				}
 			};
 			return false;
@@ -2216,10 +2206,15 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 	const auto leaderOrSelf = groupLeaderOrSelf(_dragStateItem);
 	const auto hasWhoReactedItem = leaderOrSelf
 		&& Api::WhoReactedExists(leaderOrSelf, Api::WhoReactedList::All);
-	const auto clickedReaction = link
-		? link->property(
-			kReactionsCountEmojiProperty).value<Data::ReactionId>()
-		: Data::ReactionId();
+	using namespace HistoryView::Reactions;
+	const auto clickedReaction = ReactionIdOfLink(link);
+	const auto linkPhoneNumber = link
+		? link->property(kPhoneNumberLinkProperty).toString()
+		: QString();
+	const auto linkUserpicPeerId = (link && _dragStateUserpic)
+		? link->property(kPeerLinkPeerIdProperty).toULongLong()
+		: 0;
+	const auto session = &this->session();
 	_whoReactedMenuLifetime.destroy();
 	if (!clickedReaction.empty()
 		&& leaderOrSelf
@@ -2234,9 +2229,22 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			_whoReactedMenuLifetime);
 		e->accept();
 		return;
+	} else if (!linkPhoneNumber.isEmpty()) {
+		PhoneClickHandler(session, linkPhoneNumber).onClick(
+			prepareClickContext(
+				Qt::LeftButton,
+				_dragStateItem ? _dragStateItem->fullId() : FullMsgId()));
+		return;
 	}
 	_menu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
-	const auto session = &this->session();
+	if (linkUserpicPeerId) {
+		_widget->fillSenderUserpicMenu(
+			_menu.get(),
+			session->data().peer(PeerId(linkUserpicPeerId)));
+		_menu->popup(e->globalPos());
+		e->accept();
+		return;
+	}
 	const auto controller = _controller;
 
 	if (hasWhoReactedItem) {
@@ -2454,6 +2462,14 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 				if (const auto sticker = emojiStickers->stickerForEmoji(
 						isolated)) {
 					addDocumentActions(sticker.document, item);
+				} else if (v::is<QString>(isolated.items.front())
+					&& v::is_null(isolated.items[1])) {
+					const auto id = v::get<QString>(isolated.items.front());
+					const auto docId = id.toULongLong();
+					const auto document = session->data().document(docId);
+					if (document->sticker()) {
+						addDocumentActions(document, item);
+					}
 				}
 			}
 		}
@@ -2577,35 +2593,23 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 		const auto canReply = canSendReply || item->allowsForward();
 		if (canReply) {
 			const auto selected = selectedQuote(item);
-			auto text = selected
-				? tr::lng_context_quote_and_reply(tr::now)
-				: tr::lng_context_reply_msg(tr::now);
+			auto text = (selected
+				? tr::lng_context_quote_and_reply
+				: tr::lng_context_reply_msg)(
+					tr::now,
+					Ui::Text::FixAmpersandInAction);
 			const auto replyToItem = selected.item ? selected.item : item;
 			const auto itemId = replyToItem->fullId();
 			const auto quote = selected.text;
 			const auto quoteOffset = selected.offset;
-			text.replace('&', u"&&"_q);
-			_menu->addAction(text, [=] {
-				const auto still = session->data().message(itemId);
-				const auto forceAnotherChat = base::IsCtrlPressed()
-					&& still
-					&& still->allowsForward();
-				if (canSendReply && !forceAnotherChat) {
-					_widget->replyToMessage({
-						.messageId = itemId,
-						.quote = quote,
-						.quoteOffset = quoteOffset,
-					});
-					if (!quote.empty()) {
-						_widget->clearSelected();
-					}
-				} else {
-					const auto show = controller->uiShow();
-					HistoryView::Controls::ShowReplyToChatBox(show, {
-						.messageId = itemId,
-						.quote = quote,
-						.quoteOffset = quoteOffset,
-					});
+			_menu->addAction(std::move(text), [=] {
+				_widget->replyToMessage({
+					.messageId = itemId,
+					.quote = quote,
+					.quoteOffset = quoteOffset,
+				});
+				if (!quote.empty()) {
+					_widget->clearSelected();
 				}
 			}, &st::menuIconReply);
 		}
@@ -2718,7 +2722,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 								}
 
 								const auto history = item->history()->peer->owner().history(item->history()->peer);
-								auto resolved = history->resolveForwardDraft(Data::ForwardDraft{.ids = std::move(MessageIdsList(1, itemId))});
+								auto resolved = history->resolveForwardDraft(Data::ForwardDraft{ .ids = MessageIdsList(1, itemId) });
 
 								api->forwardMessages(std::move(resolved), action, [] {
 									Ui::Toast::Show(tr::lng_share_done(tr::now));
@@ -2758,7 +2762,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 									}
 
 									const auto history = item->history()->peer->owner().history(item->history()->peer);
-									auto resolved = history->resolveForwardDraft(Data::ForwardDraft{ .ids = std::move(MessageIdsList(1, itemId)), .options = Data::ForwardOptions::NoSenderNames });
+									auto resolved = history->resolveForwardDraft(Data::ForwardDraft{ .ids = MessageIdsList(1, itemId), .options = Data::ForwardOptions::NoSenderNames });
 
 									api->forwardMessages(std::move(resolved), action, [] {
 										Ui::Toast::Show(tr::lng_share_done(tr::now));
@@ -2789,7 +2793,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						action.generateLocal = false;
 
 						const auto history = item->history()->peer->owner().history(api->session().user()->asUser());
-						auto resolved = history->resolveForwardDraft(Data::ForwardDraft{ .ids = std::move(MessageIdsList( 1, itemId )) });
+						auto resolved = history->resolveForwardDraft(Data::ForwardDraft{ .ids = MessageIdsList(1, itemId) });
 
 						api->forwardMessages(std::move(resolved), action, [] {
 							Ui::Toast::Show(tr::lng_share_done(tr::now));
@@ -3052,7 +3056,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 								}
 
 								const auto history = item->history()->peer->owner().history(item->history()->peer);
-								auto resolved = history->resolveForwardDraft(Data::ForwardDraft{.ids = std::move(MessageIdsList(1, itemId))});
+								auto resolved = history->resolveForwardDraft(Data::ForwardDraft{ .ids = MessageIdsList(1, itemId) });
 
 								api->forwardMessages(std::move(resolved), action, [] {
 									Ui::Toast::Show(tr::lng_share_done(tr::now));
@@ -3087,7 +3091,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 									}
 
 									const auto history = item->history()->peer->owner().history(item->history()->peer);
-									auto resolved = history->resolveForwardDraft(Data::ForwardDraft{.ids = std::move(MessageIdsList(1, itemId)), .options = Data::ForwardOptions::NoSenderNames});
+									auto resolved = history->resolveForwardDraft(Data::ForwardDraft{ .ids = MessageIdsList(1, itemId), .options = Data::ForwardOptions::NoSenderNames });
 
 									api->forwardMessages(std::move(resolved), action, [] {
 										Ui::Toast::Show(tr::lng_share_done(tr::now));
@@ -3118,7 +3122,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						action.generateLocal = false;
 
 						const auto history = item->history()->peer->owner().history(api->session().user()->asUser());
-						auto resolved = history->resolveForwardDraft(Data::ForwardDraft{.ids = std::move(MessageIdsList(1, itemId))});
+						auto resolved = history->resolveForwardDraft(Data::ForwardDraft{ .ids = MessageIdsList(1, itemId) });
 
 						api->forwardMessages(std::move(resolved), action, [] {
 							Ui::Toast::Show(tr::lng_share_done(tr::now));
@@ -4190,6 +4194,7 @@ void HistoryInner::mouseActionUpdate() {
 
 	TextState dragState;
 	ClickHandlerHost *lnkhost = nullptr;
+	auto dragStateUserpic = false;
 	auto selectingText = (item == _mouseActionItem)
 		&& (view == Element::Hovered())
 		&& !_selected.empty()
@@ -4285,6 +4290,7 @@ void HistoryInner::mouseActionUpdate() {
 						// stop enumeration if we've found a userpic under the cursor
 						if (point.y() >= userpicTop && point.y() < userpicTop + st::msgPhotoSize) {
 							dragState = TextState(nullptr, view->fromPhotoLink());
+							dragStateUserpic = true;
 							_dragStateItem = nullptr;
 							lnkhost = view;
 							return false;
@@ -4296,6 +4302,7 @@ void HistoryInner::mouseActionUpdate() {
 		}
 	}
 	auto lnkChanged = ClickHandler::setActive(dragState.link, lnkhost);
+	_dragStateUserpic = dragStateUserpic;
 	if (lnkChanged || dragState.cursor != _mouseCursorState) {
 		Ui::Tooltip::Hide();
 	}
@@ -4942,6 +4949,11 @@ QString HistoryInner::tooltipText() const {
 			}
 		}
 	} else if (const auto lnk = ClickHandler::getActive()) {
+		using namespace HistoryView::Reactions;
+		const auto count = ReactionCountOfLink(_dragStateItem, lnk);
+		if (count.count && count.shortened) {
+			return Lang::FormatCountDecimal(count.count);
+		}
 		return lnk->tooltip();
 	} else if (const auto view = Element::Moused()) {
 		StateRequest request;
@@ -5020,6 +5032,15 @@ ClickContext HistoryInner::prepareClickContext(
 auto HistoryInner::DelegateMixin()
 -> std::unique_ptr<HistoryMainElementDelegateMixin> {
 	return std::make_unique<HistoryMainElementDelegate>();
+}
+
+bool CanSendReply(not_null<const HistoryItem*> item) {
+	const auto peer = item->history()->peer;
+	const auto topic = item->topic();
+	return topic
+		? Data::CanSendAnything(topic)
+		: (Data::CanSendAnything(peer)
+			&& (!peer->isChannel() || peer->asChannel()->amIn()));
 }
 
 void HistoryInner::setupShortcuts() {

@@ -1200,6 +1200,9 @@ void OverlayWidget::setStaticContent(QImage image) {
 		image = std::move(image).convertToFormat(kGood);
 	}
 	image.setDevicePixelRatio(style::DevicePixelRatio());
+	if (_flip) {
+		image = image.mirrored(_flip & Qt::Horizontal, _flip & Qt::Vertical);
+	}
 	_staticContent = std::move(image);
 	_staticContentTransparent = IsSemitransparent(_staticContent);
 }
@@ -1231,7 +1234,8 @@ void OverlayWidget::documentUpdated(not_null<DocumentData*> document) {
 	if (_document != document) {
 		return;
 	} else if (documentBubbleShown()) {
-		if ((_document->loading() && _docCancel->isHidden()) || (!_document->loading() && !_docCancel->isHidden())) {
+		if ((_document->loading() && _docCancel->isHidden())
+			|| (!_document->loading() && !_docCancel->isHidden())) {
 			updateControls();
 		} else if (_document->loading()) {
 			updateDocSize();
@@ -1811,7 +1815,10 @@ void OverlayWidget::fillContextMenuActions(
 			}, &st::mediaMenuIconStats);
 		}
 	}
-	if (_stories && _stories->allowStealthMode()) {
+	if (_stories
+		&& _stories->allowStealthMode()
+		&& story
+		&& story->peer()->isUser()) {
 		const auto now = base::unixtime::now();
 		const auto stealth = _session->data().stories().stealthMode();
 		addAction(tr::lng_stealth_mode_menu_item(tr::now), [=] {
@@ -2288,6 +2295,7 @@ OverlayWidget::~OverlayWidget() {
 
 void OverlayWidget::assignMediaPointer(DocumentData *document) {
 	_savePhotoVideoWhenLoaded = SavePhotoVideo::None;
+	_flip = {};
 	_photo = nullptr;
 	_photoMedia = nullptr;
 	if (_document != document) {
@@ -2316,6 +2324,7 @@ void OverlayWidget::assignMediaPointer(not_null<PhotoData*> photo) {
 	_documentMedia = nullptr;
 	_documentLoadingTo = QString();
 	if (_photo != photo) {
+		_flip = {};
 		_photo = photo;
 		_photoMedia = _photo->createMediaView();
 		_photoMedia->wanted(Data::PhotoSize::Small, fileOrigin());
@@ -3643,7 +3652,7 @@ void OverlayWidget::displayDocument(
 			} else if (_document->isVideoFile()) {
 				auto peerId = _from ? _from->id : PeerId(0);
 				auto user = _history->session().data().peerLoaded(_from ? _from->id : PeerId(0));
-				if (!blockExist(int64(peerId.value)) || !GetEnhancedBool("blocked_user_spoiler_mode") && user && !user->isBlocked()) {
+				if (!blockExist(peerId.value) || (!GetEnhancedBool("blocked_user_spoiler_mode") && user && !user->isBlocked())) {
 					_documentMedia->automaticLoad(fileOrigin(), _message);
 				}
 				initStreamingThumbnail();
@@ -3653,7 +3662,7 @@ void OverlayWidget::displayDocument(
 			} else {
 				auto peerId = _from ? _from->id : PeerId(0);
 				auto user = _history->session().data().peerLoaded(_from ? _from->id : PeerId(0));
-				if (!blockExist(int64(peerId.value)) || !GetEnhancedBool("blocked_user_spoiler_mode") && user && !user->isBlocked()) {
+				if (!blockExist(peerId.value) || (!GetEnhancedBool("blocked_user_spoiler_mode") && user && !user->isBlocked())) {
 					_documentMedia->automaticLoad(fileOrigin(), _message);
 				}
 				_document->saveFromDataSilent();
@@ -4363,9 +4372,11 @@ void OverlayWidget::restartAtSeekPosition(crl::time position) {
 		_rotation = saved;
 		updateContentRect();
 	}
+	const auto overrideDuration = _stories
+		|| (_chosenQuality && _chosenQuality != _document);
 	auto options = Streaming::PlaybackOptions{
 		.position = position,
-		.durationOverride = ((_stories
+		.durationOverride = ((overrideDuration
 			&& _document
 			&& _document->hasDuration())
 			? _document->duration()
@@ -5469,6 +5480,26 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 			activateControls();
 		}
 		moveToNext(-1);
+	} else if (key == Qt::Key_H) {
+		if (_flip & Qt::Horizontal) {
+			_flip &= ~Qt::Horizontal;
+		} else {
+			_flip |= Qt::Horizontal;
+		}
+		if (_photo) {
+			validatePhotoCurrentImage();
+			redisplayContent();
+		}
+	} else if (key == Qt::Key_V) {
+		if (_flip & Qt::Vertical) {
+			_flip &= ~Qt::Vertical;
+		} else {
+			_flip |= Qt::Vertical;
+		}
+		if (_photo) {
+			validatePhotoCurrentImage();
+			redisplayContent();
+		}
 	} else if (key == Qt::Key_Right) {
 		if (_controlsHideTimer.isActive()) {
 			activateControls();
