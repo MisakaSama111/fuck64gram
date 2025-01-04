@@ -1329,7 +1329,9 @@ HistoryInner::VideoUserpic *HistoryInner::validateVideoUserpic(
 		not_null<PeerData*> peer) {
 	if (!peer->isPremium()
 		|| peer->userpicPhotoUnknown()
-		|| !peer->userpicHasVideo() || GetEnhancedBool("disable_premium_animation")) {
+		|| !peer->userpicHasVideo()
+		|| GetEnhancedBool("disable_premium_animation")
+		|| GetEnhancedBool("screenshot_mode")) {
 		_videoUserpics.remove(peer);
 		return nullptr;
 	}
@@ -2254,7 +2256,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			leaderOrSelf,
 			_controller);
 	} else if (leaderOrSelf) {
-		HistoryView::MaybeAddWhenEditedAction(_menu, leaderOrSelf);
+		HistoryView::MaybeAddWhenEditedForwardedAction(_menu, leaderOrSelf);
 	}
 
 	const auto addItemActions = [&](
