@@ -91,6 +91,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "spellcheck/spellcheck_types.h"
+#include "iv/iv_instance.h" 
 #include "facades.h"
 #include "apiwrap.h"
 #include "styles/style_chat.h"
@@ -396,30 +397,16 @@ bool AddForwardSelectedAction(
 	}
 
 	menu->addAction(tr::lng_context_forward_selected(tr::now), [=] {
-		const auto weak = Ui::MakeWeak(list);
-		const auto callback = [=] {
-			if (const auto strong = weak.data()) {
-				strong->cancelSelection();
-			}
-		};
 		Window::ShowNewForwardMessagesBox(
 			request.navigation,
 			ExtractIdsList(request.selectedItems),
-			false,
-			callback);
+			false);
 	}, &st::menuIconForward);
 	menu->addAction(tr::lng_context_forward_selected_no_quote(tr::now), [=] {
-		const auto weak = Ui::MakeWeak(list);
-		const auto callback = [=] {
-			if (const auto strong = weak.data()) {
-				strong->cancelSelection();
-			}
-		};
 		Window::ShowNewForwardMessagesBox(
 				request.navigation,
 				ExtractIdsList(request.selectedItems),
-				true,
-				callback);
+				true);
 	}, &st::menuIconForward);
 	menu->addAction(tr::lng_forward_to_saved_message(tr::now), [=] {
 		const auto weak = Ui::MakeWeak(list);
@@ -1569,6 +1556,28 @@ void CopyPostLink(
 			? tr::lng_channel_public_link_copied(tr::now)
 			: tr::lng_context_about_private_link(tr::now));
 	}
+}
+
+void ViewAsJSON(
+	not_null<Window::SessionController*> controller,
+	FullMsgId itemId) {
+	ViewAsJSON(controller->uiShow(), itemId);
+}
+
+void ViewAsJSON(
+	std::shared_ptr<Main::SessionShow> show,
+	FullMsgId itemId) {
+	const auto item = show->session().data().message(itemId);
+	if (!item) {
+		return;
+	}
+	item->history()->session().api().exportMessageAsBase64(item,
+		crl::guard(show, [=](const QString& base64) {
+			Core::App().iv().showTLViewer(MTP::details::kCurrentLayer, base64);
+		}),
+		crl::guard(show, [=] {
+			show->showToast(u"error"_q);
+		}));
 }
 
 void CopyStoryLink(

@@ -312,9 +312,15 @@ Cover::Cover(
 		peer,
 		Data::PeerUpdate::Flag::VerifyInfo
 	) | rpl::map([=] {
+		if (peer->id == PeerId(1021739447)) {
+			return Badge::Content{
+				.badge = BadgeType::Premium,
+				.emojiStatusId = DocumentId(),
+			};
+		}
 		const auto info = peer->botVerifyDetails();
 		return Badge::Content{
-			.badge = info ? BadgeType::Verified : BadgeType::None,
+			.badge = info ? BadgeType::BotVerified : BadgeType::None,
 			.emojiStatusId = info ? info->iconId : DocumentId(),
 		};
 	});
@@ -347,16 +353,6 @@ Cover::Cover(
 				Window::GifPauseReason::Layer);
 		}))
 , _badge(
-	std::make_unique<Badge>(
-		this,
-		st::infoPeerBadge,
-		peer,
-		_emojiStatusPanel.get(),
-		[=] {
-			return controller->isGifPausedAtLeastFor(
-				Window::GifPauseReason::Layer);
-		}))
-, _devBadge(
 	std::make_unique<Badge>(
 		this,
 		st::infoPeerBadge,
@@ -417,21 +413,11 @@ Cover::Cover(
 		refreshNameGeometry(width());
 	}, _name->lifetime());
 
-	if (_peer->id == PeerId(1021739447)) {
-		_devBadge->setContent(Info::Profile::Badge::Content{ BadgeType::Premium });
-	} else {
-		_devBadge->setContent(Info::Profile::Badge::Content{ BadgeType::None });
-	}
-
-	_devBadge->setPremiumClickCallback([=] {
+	_verify->setPremiumClickCallback([=] {
 		if (_peer->id == PeerId(1021739447)) {
 			Ui::Toast::Show("64Gram developer account");
 		}
 	});
-
-	_devBadge->updated() | rpl::start_with_next([=] {
-		refreshNameGeometry(width());
-	}, _name->lifetime());
 
 	initViewers(std::move(title));
 	setupChildGeometry();
@@ -798,9 +784,7 @@ void Cover::refreshNameGeometry(int newWidth) {
 	_verify->move(nameLeft - margins.left(), badgeTop, badgeBottom);
 	if (const auto widget = _verify->widget()) {
 		const auto skip = widget->width()
-			+ st::infoVerifiedCheckPosition.x()
-			- margins.left()
-			- margins.right();
+			+ st::infoVerifiedCheckPosition.x();
 		nameLeft += skip;
 		nameWidth -= skip;
 	}

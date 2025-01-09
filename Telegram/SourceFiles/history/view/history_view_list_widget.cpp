@@ -4278,6 +4278,11 @@ void ListWidget::overrideIsChatWide(bool isWide) {
 ListWidget::~ListWidget() {
 	// Destroy child widgets first, because they may invoke leaveEvent-s.
 	_emptyInfo = nullptr;
+	if (const auto raw = _menu.release()) {
+		crl::on_main(raw, [=] {
+			delete raw;
+		});
+	}
 }
 
 void ConfirmDeleteSelectedItems(not_null<ListWidget*> widget) {
@@ -4329,12 +4334,7 @@ void ConfirmForwardSelectedItems(not_null<ListWidget*> widget) {
 		}
 	}
 	auto ids = widget->getSelectedIds();
-	const auto weak = Ui::MakeWeak(widget);
-	Window::ShowNewForwardMessagesBox(widget->controller(), std::move(ids), false, [=] {
-		if (const auto strong = weak.data()) {
-			strong->cancelSelection();
-		}
-	});
+	Window::ShowNewForwardMessagesBox(widget->controller(), std::move(ids), false);
 }
 
 void ConfirmForwardNoQuoteSelectedItems(not_null<ListWidget*> widget) {
@@ -4348,12 +4348,7 @@ void ConfirmForwardNoQuoteSelectedItems(not_null<ListWidget*> widget) {
 		}
 	}
 	auto ids = widget->getSelectedIds();
-	const auto weak = Ui::MakeWeak(widget);
-	Window::ShowNewForwardMessagesBox(widget->controller(), std::move(ids), true, [=] {
-		if (const auto strong = weak.data()) {
-			strong->cancelSelection();
-		}
-	});
+	Window::ShowNewForwardMessagesBox(widget->controller(), std::move(ids), true);
 }
 
 MessageIdsList ExtractIdsList(const SelectedItems &items) {
